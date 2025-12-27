@@ -1,0 +1,8 @@
+# Legacy code (archived)
+legacy-paper-api/
+
+# Claude cache
+.claude/
+
+# OS files
+.DS_Store
