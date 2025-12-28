@@ -1,9 +1,9 @@
-[submodule "templify-backend"]
-	path = templify-backend
-	url = https://github.com/templifying/templify-backend.git
-[submodule "templify-web"]
-	path = templify-web
-	url = https://github.com/templifying/templify-web.git
-[submodule "templify-cli"]
-	path = templify-cli
-	url = https://github.com/templifying/templify-cli.git
+[submodule "mkpdfs-backend"]
+	path = mkpdfs-backend
+	url = https://github.com/mkpdfs/mkpdfs-backend.git
+[submodule "mkpdfs-web"]
+	path = mkpdfs-web
+	url = https://github.com/mkpdfs/mkpdfs-web.git
+[submodule "mkpdfs-cli"]
+	path = mkpdfs-cli
+	url = https://github.com/mkpdfs/mkpdfs-cli.git
