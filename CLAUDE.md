@@ -44,6 +44,31 @@ git checkout dev
 | stage | Staging | Client testing |
 | dev | Development | Active development |
 
+### Development Workflow (IMPORTANT)
+
+**All changes must go through dev first:**
+
+1. **Commit to dev** - Make all changes on the `dev` branch first
+2. **Push to dev** - Deploy to development environment
+3. **Test in dev** - Verify the changes work correctly in the dev environment
+4. **Merge to main** - Only after testing passes, merge dev into main for production
+
+```bash
+# Standard workflow
+git checkout dev
+git pull origin dev
+# make changes, commit
+git push origin dev
+# TEST IN DEV ENVIRONMENT
+# Once verified working:
+git checkout main
+git pull origin main
+git merge dev
+git push origin main
+```
+
+**Never push directly to main without testing in dev first.**
+
 ## CI/CD
 
 - **Backend**: GitHub Actions → Serverless Framework deploy (OIDC auth)
