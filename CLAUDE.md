@@ -82,6 +82,62 @@ git push origin main
 3. **User Isolation**: Separate S3 prefixes and DynamoDB partition keys per user
 4. **Subscription Tiers**: Free, Starter, Professional, Enterprise
 
+## Marketplace Feature
+
+The marketplace provides pre-built PDF templates that users can browse and add to their library.
+
+### Thumbnail System
+
+Marketplace templates have thumbnail previews stored in S3:
+
+| Type | Path | Description |
+|------|------|-------------|
+| Cropped | `marketplace/thumbnails/{templateId}.png` | 800x600 top portion, used in cards |
+| Full | `marketplace/thumbnails-full/{templateId}.png` | Full page, available for detailed preview |
+
+**Public Access**: Both thumbnail folders have public read access via S3 bucket policy (defined in `mkpdfs-backend/src/resources/s3.ts`).
+
+**URLs**:
+```
+https://mkpdfs-{stage}-bucket.s3.us-east-1.amazonaws.com/marketplace/thumbnails/{templateId}.png
+https://mkpdfs-{stage}-bucket.s3.us-east-1.amazonaws.com/marketplace/thumbnails-full/{templateId}.png
+```
+
+### Generating Thumbnails
+
+To regenerate thumbnails from templates:
+
+```bash
+# 1. Download templates and sample data
+aws s3 sync s3://mkpdfs-{stage}-bucket/marketplace/templates/ /tmp/thumbnails/templates/
+aws dynamodb scan --table-name mkpdfs-{stage}-marketplace > /tmp/thumbnails/sample_data.json
+
+# 2. Run thumbnail generator (requires Node.js, puppeteer, handlebars)
+cd /tmp/thumbnails
+npm install handlebars puppeteer
+node generate.js  # Creates output/ (cropped) and output-full/ (full page)
+
+# 3. Upload to S3
+aws s3 sync /tmp/thumbnails/output/ s3://mkpdfs-{stage}-bucket/marketplace/thumbnails/
+aws s3 sync /tmp/thumbnails/output-full/ s3://mkpdfs-{stage}-bucket/marketplace/thumbnails-full/
+```
+
+### DynamoDB Schema
+
+Marketplace templates include a `thumbnailKey` field:
+
+```json
+{
+  "templateId": "mp-business-invoice",
+  "thumbnailKey": "marketplace/thumbnails/mp-business-invoice.png",
+  "name": "Professional Invoice",
+  "category": "business",
+  ...
+}
+```
+
+The API handlers (`listTemplates`, `getTemplate`, `getTemplatePreview`) automatically convert `thumbnailKey` to a full `thumbnailUrl` using the `ASSETS_BUCKET_URL` environment variable.
+
 ## Domain Configuration
 
 - Domain: `templifying.com`
