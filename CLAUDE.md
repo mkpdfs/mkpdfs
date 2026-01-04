@@ -81,6 +81,46 @@ git push origin main
 2. **Dual Authentication**: Cognito (web) + API tokens (programmatic)
 3. **User Isolation**: Separate S3 prefixes and DynamoDB partition keys per user
 4. **Subscription Tiers**: Free, Starter, Professional, Enterprise
+5. **Async Processing**: SQS queues for long-running operations (PDF generation, AI template generation)
+
+## AI Template Generation Feature
+
+Premium feature allowing users to generate PDF templates using Claude AI (via AWS Bedrock).
+
+### Architecture
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   Frontend  │───▶│  API GW     │───▶│    SQS      │───▶│   Lambda    │
+│  (Next.js)  │    │  (Submit)   │    │   Queue     │    │ (Bedrock)   │
+└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+       │                                                        │
+       │ Poll status                                           │
+       ▼                                                        ▼
+┌─────────────┐                                         ┌─────────────┐
+│  API GW     │◀────────────────────────────────────────│  DynamoDB   │
+│  (Status)   │                                         │  (AI Jobs)  │
+└─────────────┘                                         └─────────────┘
+```
+
+### Key Features
+- **Async Processing**: AI generation takes 30-60 seconds, uses SQS + polling
+- **Image Support**: Users can upload reference images (screenshots, mockups)
+- **S3 Upload for Large Images**: Images >500KB uploaded to S3 first (bypasses API Gateway 1MB limit)
+- **Iterative Refinement**: Users can provide feedback to improve generated templates
+
+### API Endpoints
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/ai/generate-template-async` | POST | Submit AI generation job |
+| `/ai/jobs/{jobId}` | GET | Poll job status |
+| `/ai/image-upload-url` | POST | Get presigned S3 URL for large images |
+
+### S3 Storage
+- User images: `users/{userId}/ai-images/{imageId}.{ext}`
+- Supported formats: PNG, JPEG, WebP (max 10MB)
+
+See `mkpdfs-backend/CLAUDE.md` for detailed implementation documentation.
 
 ## Marketplace Feature
 
