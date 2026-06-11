@@ -144,10 +144,7 @@ Per-directory (current directory only — no parent search), committable:
 - Rate limits: per-IP on `/device` and `/token`; `/token` enforces the polling `interval` server-side (`slow_down` on violation); `/approve` allows max 5 failed code lookups per user before temporary lockout — `userCode` guessing must be infeasible within the TTL.
 - Approval binds the code to the approving user only; a guessed/wrong code can never bind someone else's pending device.
 
-**Token minting — primary and fallback (verify during planning):**
-
-- *Primary:* CUSTOM_AUTH flow — `/token` lambda calls `AdminInitiateAuth(CUSTOM_AUTH)` for the bound user; define/create/verify challenge triggers validate the `deviceCode` against the DynamoDB item. Tokens are never stored at rest. **Open risk:** Google-federated users have Cognito status `EXTERNAL_PROVIDER` and may not be eligible for this flow — this MUST be verified with a real federated user in dev before committing to this path.
-- *Fallback (if federated users fail):* the approval page submits its session tokens to `/approve`; they are stored KMS-encrypted with a ≤5-minute TTL and deleted on first read by `/token`. Less elegant (tokens transit DynamoDB briefly) but works uniformly for all identity types.
+**Token minting — RESOLVED (implemented 2026-06-11):** token handover. The approval page submits its session tokens (strictly validated: exactly `{idToken, accessToken, refreshToken}` strings ≤8KB each) to `/approve`; they sit on the cli-auth item (encrypted at rest, ≤10-min TTL, no PITR on the table) and are deleted atomically on first read by `/token` (conditional delete + ALL_OLD = exactly-once delivery). CUSTOM_AUTH was dropped without a spike: Google-federated users carry Cognito status `EXTERNAL_PROVIDER` and cannot authenticate via `AdminInitiateAuth` — a documented Cognito limitation — so the handover path is the only one that works uniformly for all identity types.
 
 ### New web (mkpdfs-web)
 
@@ -181,7 +178,7 @@ mkpdfs-cli/
 
 ## Open items to verify during planning
 
-1. **CUSTOM_AUTH with Google-federated users** (`EXTERNAL_PROVIDER` status) — test in dev before building; switch to the documented fallback if it fails.
+1. ~~CUSTOM_AUTH with Google-federated users~~ — RESOLVED: dropped (EXTERNAL_PROVIDER cannot use AdminInitiateAuth); token handover implemented instead. See "Token minting — RESOLVED".
 2. **Backend `If-Match`/expected-version on `PUT /templates/{id}`** — follow-up to replace the client-side conflict check with a real server-side guard.
 3. **Pagination on `GET /templates`** — the handler currently returns everything with no `Limit`/`LastEvaluatedKey`; fine at today's plan limits, but the CLI's `--json` contract should anticipate a paginated response before it ossifies.
 4. Size limits surfaced by the CLI: max template upload size, max data JSON size, and PDF download streaming behavior — confirm backend numbers and bake them into client-side pre-validation messages.
