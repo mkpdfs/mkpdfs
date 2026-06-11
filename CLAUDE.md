@@ -4,182 +4,78 @@ This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-Templify is a multi-tenant PDF generation SaaS platform. Users can upload Handlebars templates, manage API keys, and generate PDFs via API or web interface.
+mkpdfs (formerly Templify — the `tlfy_` token prefix and the `github-actions-templify-*` IAM roles survive from that era) is a multi-tenant PDF generation SaaS. Users upload Handlebars templates, manage API keys, and generate PDFs via API or web dashboard.
 
 ## Repository Structure
 
-This is an **orchestrator repository** containing git submodules:
+Orchestrator repo with git submodules (each an independent repo with its own CI/CD):
 
-- `templify-backend/` - Serverless Framework API (AWS Lambda, DynamoDB, S3, Cognito)
-- `templify-web/` - Next.js 14 frontend dashboard
-- `templify-cli/` - Node.js CLI tool (oclif)
+- `mkpdfs-backend/` — AWS CDK app (Lambda, DynamoDB, S3, Cognito, SQS) + TypeScript handlers
+- `mkpdfs-web/` — Next.js frontend (Amplify app `d1cfnbzyl1wf46`; mkpdfs.com / dev.mkpdfs.com)
+- `mkpdfs-cli/` — Node.js CLI tool (oclif)
+- `legacy-paper-api/`, `templify-backend/` — legacy, retired
 
-Each submodule is an independent repository with its own CI/CD pipeline.
+## Infrastructure (CDK — migrated 2026-06-11, greenfield)
 
-## Development Workflow
+**Serverless Framework was RETIRED.** `mkpdfs-backend/cdk/` is the only deploy path. 5 stacks per env, `-c environment=dev|prod`:
 
-### Cloning
+| Stack | Contents |
+|---|---|
+| `Mkpdfs-Database-{env}` | 9 DynamoDB tables `mkpdfs-{env}-*` |
+| `Mkpdfs-Storage-{env}` | S3 bucket `mkpdfs-{env}-bucket` (versioned; `lambda-layers/` holds the Chromium artifact) |
+| `Mkpdfs-Auth-{env}` | Cognito pool + client + identity pool + Hosted UI `auth-mkpdfs-{env}` + Google IdP + native lambda triggers |
+| `Mkpdfs-Jobs-{env}` | 4 SQS queues + event source mappings |
+| `Mkpdfs-Api-{env}` | RestApi (~28 lambdas, real OPTIONS preflights), custom domain EDGE + Route53 |
+
+Key facts:
+- **Live IDs (post-greenfield)**: dev pool `us-east-1_en1MuJD0a` / client `vis091qbpsj164csp32jketbd`; prod pool `us-east-1_IijpRQ3FN` / client `3mgah7n76j694e5sb0092fl6hn`. Old serverless-era pools/IDs are dead.
+- **Chromium layer by ARN**: `arn:aws:lambda:us-east-1:197837191835:layer:mkpdfs-chromium:1` (official Sparticuz v143 x64, artifact in `s3://mkpdfs-prod-bucket/lambda-layers/`). Functions reference the ARN; `puppeteer-core` is bundled by esbuild. Never rebuild/package a local 114MB layer. Updating Chromium = publish a new layer version, bump the ARN.
+- NodejsFunction esbuild local bundling (`forceDockerBundling: false`), per-function IAM grants, RemovalPolicy DESTROY dev / RETAIN prod.
+- Stripe secrets are read at **runtime from SSM** (`src/libs/ssmParams.ts`); price IDs are deploy-time SSM refs and MUST be `String` type — **CFN does not accept SecureString as template Parameter and the deploy aborts with exit 0** (check the end of the log).
+- Migration history, live-verified inventory and runbook lessons: `mkpdfs-backend/docs/cdk-migration-plan.md`.
+
+### Deploy
 
 ```bash
-git clone --recurse-submodules https://github.com/templifying/paper-workspace.git
+cd mkpdfs-backend
+npm run cdk:diff          # dev
+npm run cdk:deploy:dev    # has --require-approval never (no TTY in CI/agents)
+npm run cdk:deploy:prod
 ```
 
-### Working with Submodules
-
-```bash
-# Update all submodules to latest
-git submodule update --remote
-
-# Work in a submodule
-cd templify-backend
-git checkout dev
-# make changes, commit, push
-```
+CI: `.github/workflows/deploy.yml` — push to `dev` → CDK deploy dev; push to `main` → CDK deploy prod (OIDC roles `github-actions-templify-{dev,prod}`, secrets `AWS_ROLE_ARN_{DEV,PROD}`).
 
 ## Branch Strategy
 
-| Branch | Environment | Description |
-|--------|-------------|-------------|
-| main | Production | Stable releases |
-| stage | Staging | Client testing |
-| dev | Development | Active development |
+| Branch | Environment |
+|--------|-------------|
+| main | Production (mkpdfs.com, apis.mkpdfs.com) |
+| dev | Development (dev.mkpdfs.com, dev.apis.mkpdfs.com) |
 
-### Development Workflow (IMPORTANT)
+All changes go through dev first; merge to main only after dev verification. `stage` is legacy.
 
-**All changes must go through dev first:**
+## API & Auth
 
-1. **Commit to dev** - Make all changes on the `dev` branch first
-2. **Push to dev** - Deploy to development environment
-3. **Test in dev** - Verify the changes work correctly in the dev environment
-4. **Merge to main** - Only after testing passes, merge dev into main for production
+- **Dual auth** (`src/libs/middleware/dualAuth.ts`): Cognito JWT (validated by the API Gateway authorizer) OR API token `x-api-key: tlfy_*` (SHA256 vs tokens table).
+- **`POST /v1/pdf/generate`** — server-to-server route, **API-key ONLY** (`apiKeyOnlyMiddleware`, no Gateway authorizer; JWT deliberately rejected there because without the authorizer a forged JWT could impersonate).
+- **`PUT /templates/{templateId}`** — update template content in place (multipart or JSON base64, Handlebars validated, ownership-checked, subscription-gated; added 2026-06-11).
+- Biggest consumer: Academia Connects service account `platform@academiaconnects.com` (enterprise, manual "Contact Sales" row). Provisioning is idempotent via `provision-mkpdfs.mjs` in the democonnect-api repo; its secrets live in SSM `/democonnect/labs/mkpdfs[-dev]/*` (SecureString — read with `--with-decryption`, never print).
 
-```bash
-# Standard workflow
-git checkout dev
-git pull origin dev
-# make changes, commit
-git push origin dev
-# TEST IN DEV ENVIRONMENT
-# Once verified working:
-git checkout main
-git pull origin main
-git merge dev
-git push origin main
-```
+## AI Template Generation
 
-**Never push directly to main without testing in dev first.**
+Premium feature: async SQS + Bedrock (Claude) job generates a template; poll `/ai/jobs/{jobId}`. Images >500KB go via presigned S3 (`/ai/image-upload-url`). See `mkpdfs-backend/CLAUDE.md` for details.
 
-## CI/CD
+## Marketplace
 
-- **Backend**: GitHub Actions → Serverless Framework deploy (OIDC auth)
-- **Frontend**: GitHub Actions → AWS Amplify
-- **CLI**: npm publish
+Pre-built templates with public thumbnails at `marketplace/thumbnails[-full]/{templateId}.png` in the env bucket (public-read via bucket policy). Handlers convert `thumbnailKey` → `thumbnailUrl` via `ASSETS_BUCKET_URL`.
 
-## Key Architecture Decisions
+## Domains & Account
 
-1. **Serverless Framework** over CDK for simpler API-focused deployments
-2. **Dual Authentication**: Cognito (web) + API tokens (programmatic)
-3. **User Isolation**: Separate S3 prefixes and DynamoDB partition keys per user
-4. **Subscription Tiers**: Free, Starter, Professional, Enterprise
-5. **Async Processing**: SQS queues for long-running operations (PDF generation, AI template generation)
+- AWS account `197837191835`, profile `rocketeast`, region us-east-1.
+- `mkpdfs.com` zone `Z0217803KO361QOLBIHN` (app: mkpdfs.com/dev.mkpdfs.com via Amplify; API: apis.mkpdfs.com/dev.apis.mkpdfs.com via API GW custom domains, owned by CDK).
+- Gotcha: API GW custom domains created by the old serverless plugin lived OUTSIDE CFN — if a stray domain/A/AAAA record ever blocks a deploy, delete domain AND records together.
 
-## AI Template Generation Feature
+## Known backlog
 
-Premium feature allowing users to generate PDF templates using Claude AI (via AWS Bedrock).
-
-### Architecture
-
-```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│   Frontend  │───▶│  API GW     │───▶│    SQS      │───▶│   Lambda    │
-│  (Next.js)  │    │  (Submit)   │    │   Queue     │    │ (Bedrock)   │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-       │                                                        │
-       │ Poll status                                           │
-       ▼                                                        ▼
-┌─────────────┐                                         ┌─────────────┐
-│  API GW     │◀────────────────────────────────────────│  DynamoDB   │
-│  (Status)   │                                         │  (AI Jobs)  │
-└─────────────┘                                         └─────────────┘
-```
-
-### Key Features
-- **Async Processing**: AI generation takes 30-60 seconds, uses SQS + polling
-- **Image Support**: Users can upload reference images (screenshots, mockups)
-- **S3 Upload for Large Images**: Images >500KB uploaded to S3 first (bypasses API Gateway 1MB limit)
-- **Iterative Refinement**: Users can provide feedback to improve generated templates
-
-### API Endpoints
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/ai/generate-template-async` | POST | Submit AI generation job |
-| `/ai/jobs/{jobId}` | GET | Poll job status |
-| `/ai/image-upload-url` | POST | Get presigned S3 URL for large images |
-
-### S3 Storage
-- User images: `users/{userId}/ai-images/{imageId}.{ext}`
-- Supported formats: PNG, JPEG, WebP (max 10MB)
-
-See `mkpdfs-backend/CLAUDE.md` for detailed implementation documentation.
-
-## Marketplace Feature
-
-The marketplace provides pre-built PDF templates that users can browse and add to their library.
-
-### Thumbnail System
-
-Marketplace templates have thumbnail previews stored in S3:
-
-| Type | Path | Description |
-|------|------|-------------|
-| Cropped | `marketplace/thumbnails/{templateId}.png` | 800x600 top portion, used in cards |
-| Full | `marketplace/thumbnails-full/{templateId}.png` | Full page, available for detailed preview |
-
-**Public Access**: Both thumbnail folders have public read access via S3 bucket policy (defined in `mkpdfs-backend/src/resources/s3.ts`).
-
-**URLs**:
-```
-https://mkpdfs-{stage}-bucket.s3.us-east-1.amazonaws.com/marketplace/thumbnails/{templateId}.png
-https://mkpdfs-{stage}-bucket.s3.us-east-1.amazonaws.com/marketplace/thumbnails-full/{templateId}.png
-```
-
-### Generating Thumbnails
-
-To regenerate thumbnails from templates:
-
-```bash
-# 1. Download templates and sample data
-aws s3 sync s3://mkpdfs-{stage}-bucket/marketplace/templates/ /tmp/thumbnails/templates/
-aws dynamodb scan --table-name mkpdfs-{stage}-marketplace > /tmp/thumbnails/sample_data.json
-
-# 2. Run thumbnail generator (requires Node.js, puppeteer, handlebars)
-cd /tmp/thumbnails
-npm install handlebars puppeteer
-node generate.js  # Creates output/ (cropped) and output-full/ (full page)
-
-# 3. Upload to S3
-aws s3 sync /tmp/thumbnails/output/ s3://mkpdfs-{stage}-bucket/marketplace/thumbnails/
-aws s3 sync /tmp/thumbnails/output-full/ s3://mkpdfs-{stage}-bucket/marketplace/thumbnails-full/
-```
-
-### DynamoDB Schema
-
-Marketplace templates include a `thumbnailKey` field:
-
-```json
-{
-  "templateId": "mp-business-invoice",
-  "thumbnailKey": "marketplace/thumbnails/mp-business-invoice.png",
-  "name": "Professional Invoice",
-  "category": "business",
-  ...
-}
-```
-
-The API handlers (`listTemplates`, `getTemplate`, `getTemplatePreview`) automatically convert `thumbnailKey` to a full `thumbnailUrl` using the `ASSETS_BUCKET_URL` environment variable.
-
-## Domain Configuration
-
-- Domain: `templifying.com`
-- Route53 Hosted Zone: `Z05722842FNRUUMO9PPEV`
-- AWS Account: `rocketeast` profile (197837191835)
+- Tokens with expiration compare `expiresAt` (ISO) against `Date.now()` (epoch) — expired tokens never expire.
+- No serverless-offline replacement documented (use dev env + `aws logs tail`).
