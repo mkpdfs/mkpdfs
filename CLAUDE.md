@@ -74,6 +74,7 @@ Pre-built templates with public thumbnails at `marketplace/thumbnails[-full]/{te
 - AWS account `197837191835`, profile `rocketeast`, region us-east-1.
 - `mkpdfs.com` zone `Z0217803KO361QOLBIHN` (app: mkpdfs.com/dev.mkpdfs.com via Amplify; API: apis.mkpdfs.com/dev.apis.mkpdfs.com via API GW custom domains, owned by CDK).
 - Gotcha: API GW custom domains created by the old serverless plugin lived OUTSIDE CFN — if a stray domain/A/AAAA record ever blocks a deploy, delete domain AND records together.
+- Gotcha: a CDK deploy can add API GW resources while the stage keeps serving the OLD deployment snapshot (routes exist but return `{"message":"Missing Authentication Token"}`). Fix: `aws apigateway create-deployment --rest-api-id <id> --stage-name <env>` (happened on prod 2026-06-12 after a partially-failed→rerun deploy).
 
 ## Known backlog
 
