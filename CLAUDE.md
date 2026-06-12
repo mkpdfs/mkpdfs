@@ -17,7 +17,7 @@ Orchestrator repo with git submodules (each an independent repo with its own CI/
 
 ## Infrastructure (CDK — migrated 2026-06-11, greenfield)
 
-**Serverless Framework was RETIRED.** `mkpdfs-backend/cdk/` is the only deploy path. 5 stacks per env, `-c environment=dev|prod`:
+**Serverless Framework was RETIRED.** `mkpdfs-backend/cdk/` is the only deploy path. 6 stacks per env, `-c environment=dev|prod`:
 
 | Stack | Contents |
 |---|---|
@@ -26,6 +26,7 @@ Orchestrator repo with git submodules (each an independent repo with its own CI/
 | `Mkpdfs-Auth-{env}` | Cognito pool + client + identity pool + Hosted UI `auth-mkpdfs-{env}` + Google IdP + native lambda triggers |
 | `Mkpdfs-Jobs-{env}` | 4 SQS queues + event source mappings |
 | `Mkpdfs-Api-{env}` | RestApi (~28 lambdas, real OPTIONS preflights), custom domain EDGE + Route53 |
+| `Mkpdfs-Monitoring-{env}` | 15 CW alarms (billing-focused: webhook errors/signatures, recharge declines, debit failures + API/DDB/DLQ), dashboard `mkpdfs-operations-{env}`, SNS `mkpdfs-alerts-{env}`. Gotcha: its log metric filters key off literal handler log strings AND require the lambda log groups to EXIST (pre-create `/aws/lambda/<fn>` for never-invoked fns or the stack rolls back — bit us on first prod deploy) |
 
 Key facts:
 - **Live IDs (post-greenfield)**: dev pool `us-east-1_en1MuJD0a` / client `vis091qbpsj164csp32jketbd`; prod pool `us-east-1_IijpRQ3FN` / client `3mgah7n76j694e5sb0092fl6hn`. Old serverless-era pools/IDs are dead.
