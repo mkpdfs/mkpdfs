@@ -68,6 +68,7 @@ All changes go through dev first; merge to main only after dev verification. `st
 - Gate: `checkCreditsMiddleware` → **402 INSUFFICIENT_CREDITS**; debit in after-hook on HTTP 200 (`debitCreditsMiddleware`); async jobs debit in the SQS processor. Brief overdraw under concurrency is accepted by design.
 - **Auto-recharge** (opt-in, threshold 1–1,000, default 100): post-debit trigger creates an off-session PaymentIntent with the saved card; `rechargeInProgress` lock with 15-min stale takeover; card decline → webhook disables it + sets `autoRechargeError` (UI banner). Routes: `PUT /billing/auto-recharge`, `GET /billing/ledger`.
 - Stripe: one-time Checkout (`setup_future_usage: off_session` saves the card), webhook events `checkout.session.completed` + `payment_intent.succeeded/payment_failed` (recharge PIs carry `metadata.kind=auto_recharge`; purchase PIs are credited ONLY via the checkout event). Price id via SSM String `/mkpdfs/{env}/stripe-price-credits-1000`. Customer Portal = payment-method management only.
+- **Refunds**: `charge.refunded` claws back the refunded credits (per-Refund idempotency `stripe#<re_…>`, prorated for partials). Balance may go NEGATIVE (user already spent them) — the 402 gate blocks until they repurchase.
 - AI generation requires `creditBalance > 0` (fixed 15/month quota, does NOT consume credits).
 - Monthly `usage` table is stats-only now — it never blocks.
 
