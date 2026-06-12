@@ -12,7 +12,7 @@ Orchestrator repo with git submodules (each an independent repo with its own CI/
 
 - `mkpdfs-backend/` — AWS CDK app (Lambda, DynamoDB, S3, Cognito, SQS) + TypeScript handlers
 - `mkpdfs-web/` — Next.js frontend (Amplify app `d1cfnbzyl1wf46`; mkpdfs.com / dev.mkpdfs.com)
-- `mkpdfs-cli/` — Node.js CLI tool (oclif)
+- `mkpdfs-cli/` — Go + Cobra CLI (`mkp`; dev binary `mkp-cli` via `make build`/`make dev-link`). Developer workflow: branded device-flow login (`mkp auth login` → mkpdfs.com/cli/authorize), templates pull/push with `.mkpdfs.json` mapping + conflict/env guards, `pdf generate` (JWT or `--api-key`), tokens/usage/config. Per-env credentials in `~/Library/Application Support/mkpdfs/config.json`. Smoke: `scripts/smoke.sh` vs dev. CLI auth backend: `/auth/cli/{device,approve,token}` (device flow, token handover, one-time read).
 - `legacy-paper-api/`, `templify-backend/` — legacy, retired
 
 ## Infrastructure (CDK — migrated 2026-06-11, greenfield)

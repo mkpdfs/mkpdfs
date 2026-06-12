@@ -1,7 +1,7 @@
 # mkpdfs CLI (`mkp`) — v1 Design
 
 **Date:** 2026-06-11
-**Status:** Approved — rev 2 after external (Codex) design review
+**Status:** IMPLEMENTED (v1 shipped to dev 2026-06-11) — rev 3; deviations from spec noted inline. Binary ships as `mkp-cli` in dev (`mkp` reserved for the future Homebrew release).
 **Repos affected:** `mkpdfs-cli/` (new code), `mkpdfs-backend/` (3 new endpoints + Cognito custom auth triggers), `mkpdfs-web/` (1 new page)
 
 ## Goal
