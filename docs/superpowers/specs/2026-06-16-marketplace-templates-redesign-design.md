@@ -1,8 +1,20 @@
 # Marketplace Templates Redesign — Design
 
 **Date:** 2026-06-16
-**Status:** Approved (pending user spec review)
+**Status:** Approved + revised after Codex review
 **Owner:** sim4r4
+
+## Codex review — accepted changes (verified against code)
+
+A second-opinion review surfaced real correctness gaps, verified in the codebase:
+
+1. **Prod PDF is portrait A4, hard-coded.** `pdfService.ts:126` calls `page.pdf({ format: 'A4', margin: 0 })` — no `landscape`, no `preferCSSPageSize`. A landscape-designed certificate/flyer would render BROKEN as portrait when a real user generates it. → **All 13 templates are designed portrait A4.** No infra change.
+2. **Helper fidelity.** The real generator (`pdfService.ts:38-58`) registers exactly `ifEq`, `gt`, `formatDate` (`toLocaleDateString`), `formatCurrency` (`Intl` USD). The thumbnail render MUST register the identical four (the old `generate-thumbnails.js` used different ones: `multiply`, `$X.XX`). Templates must NOT use any helper outside those four (e.g. no `multiply`) or prod output breaks.
+3. **Never import `seed-marketplace.ts`.** It calls `main()` at module load → destructive clear+reseed. The shared template catalog (ids + sampleData + thumbnailKey) is extracted to a side-effect-free module both scripts import.
+4. **Screenshot = clip to one A4 page, not `fullPage`.** Match the single-page A4 the PDF produces; viewport A4 px @ `deviceScaleFactor: 2`.
+5. **Card crop.** Card uses `object-cover` (centers) in an `h-32` band → a portrait page would show its vertical middle. One-line web tweak `object-cover` → `object-cover object-top` so the card shows the document's title block. Modal keeps `object-contain` (whole page).
+6. **`puppeteer-core` needs an `executablePath`.** Use full `puppeteer` locally (bundles Chrome) or point `puppeteer-core` at the installed Chrome; thumbnails are local-only.
+7. **CacheControl on thumbnail puts** so overwrites refresh; deterministic `{templateId}.png` keys mean no orphan problem.
 
 ## Problem
 
@@ -62,11 +74,13 @@ Each keeps its existing `templateId`, `category`, `name`, `description`, `tags`,
 
 **Layout principles:** generous margins and whitespace; hierarchy through weight/size/space rather than colored boxes; thin hairline rules; consistent vertical rhythm.
 
-**Per-category character (same base, distinct voice):**
+**Per-category character (same base, distinct voice). All portrait A4.**
 - **Business** — trustworthy & precise: thin tables (no heavy zebra), totals with an accent rule, tabular figures.
-- **Certificates** — elegant & ceremonial: landscape, fine border frame, large serif name, an SVG seal/medal in the accent, signature line. Most ornamented but restrained.
-- **Marketing** — editorial & confident: a touch more color/scale, hero accent block, feature grid, clear CTA.
+- **Certificates** — elegant & ceremonial: **portrait** A4 with a fine border frame, large serif name, an SVG seal/medal in the accent, signature line. Most ornamented but restrained. (Portrait, not landscape — prod renders A4 portrait.)
+- **Marketing** — editorial & confident: a touch more color/scale, hero accent block, feature grid, clear CTA. Flyer is a single portrait A4 poster.
 - **Personal** — warm & human: resume as an ATS-friendly two-column; letters with a clean letterhead; invitation more centered and warm.
+
+**Handlebars constraint:** templates may use only the four helpers prod registers — `ifEq`, `gt`, `formatDate`, `formatCurrency`. Prefer pre-formatted values already present in `sampleDataJson` to minimize divergence. No other helpers.
 
 ## Font-rendering risk
 
@@ -74,23 +88,32 @@ The deployed PDF path uses the Sparticuz Chromium layer in Lambda; external Goog
 - Thumbnails are generated **locally** (network + system fonts available) → no risk for the previews.
 - For the deployed templates, verify the fonts actually render through the real generation path. If they don't load, **embed the WOFF2 fonts as base64 data URIs** in the `.hbs`. Always ship a system-font fallback so output is never broken.
 
+## Shared catalog module (new)
+
+`mkpdfs-backend/scripts/marketplace-catalog.ts` — side-effect-free export of the `templates` array (the data currently inline in `seed-marketplace.ts`), the `MarketplaceTemplate` interface, and `thumbnailKey` per item. Both `seed-marketplace.ts` and `generate-thumbnails.ts` import from here. `seed-marketplace.ts` keeps its `main()`/clear/seed logic but sources data from the catalog.
+
 ## Thumbnail pipeline
 
-New script: `mkpdfs-backend/scripts/generate-thumbnails.ts`.
+Rewrite `mkpdfs-backend/scripts/generate-thumbnails.ts` (replacing the stale `.js`):
 
-1. For each template: read its `.hbs`, compile with Handlebars using the template's `sampleDataJson`.
-2. Render the HTML in headless Chrome via `puppeteer-core` pointed at the locally installed Chrome (fallback: `@sparticuz/chromium` or the e2e-browser skill's bundled Chrome).
-3. Set viewport to the template's natural page size (portrait A4/Letter for docs; landscape for certificates and the flyer), `deviceScaleFactor: 2`.
-4. Full-page screenshot → PNG written to `scripts/marketplace-thumbnails/{templateId}.png` (gitignored or kept — TBD trivial).
-5. Upload each PNG to `s3://mkpdfs-{env}-bucket/marketplace/thumbnails/{templateId}.png`, `ContentType: image/png` (public-read is already granted by the bucket policy for `marketplace/thumbnails`).
+1. Import templates + sampleData from the catalog (NOT from the destructive seed).
+2. Register the **same four helpers as `pdfService.ts`** verbatim (`ifEq`, `gt`, `formatDate`, `formatCurrency`). Compile each `.hbs` with its sample data.
+3. Launch headless Chrome via full `puppeteer` (bundles Chrome); fallback `puppeteer-core` + discovered macOS Chrome `executablePath`.
+4. Viewport = A4 px @96dpi `794×1123`, `deviceScaleFactor: 2`; `setContent(html, { waitUntil: 'networkidle0' })`, then `await page.evaluate(() => document.fonts.ready)`.
+5. Screenshot **clipped to one A4 page** (`clip: {0,0,794,1123}`), `type: png` → `scripts/marketplace-thumbnails/{templateId}.png`.
+6. Upload to `s3://mkpdfs-{env}-bucket/marketplace/thumbnails/{templateId}.png`, `ContentType: image/png`, `CacheControl: public,max-age=300` (public-read already granted by the bucket policy).
 
-The card (`object-cover`, `h-32` band) crops to the document's top; the modal (`object-contain`) shows the whole page. One full-page PNG serves both.
+The card (`object-cover object-top`, `h-32` band) shows the document's title block; the modal (`object-contain`) shows the whole page. One A4-clipped PNG serves both.
 
 ## Seed changes
 
-In `seed-marketplace.ts`:
-- Add `thumbnailKey: \`marketplace/thumbnails/${templateId}.png\`` to the `MarketplaceTemplate` interface and to each seeded item.
+In the catalog/`seed-marketplace.ts`:
+- Add `thumbnailKey: \`marketplace/thumbnails/${templateId}.png\`` to the `MarketplaceTemplate` interface and to each item.
 - No other behavioral change. `clearExistingData` + `seedTemplates` already handle DynamoDB + `.hbs` S3 upload.
+
+## Minimal web change
+
+`mkpdfs-web/src/components/marketplace/TemplateCard.tsx`: `object-cover` → `object-cover object-top` (one line) so the card crops to the document's top. No other web changes.
 
 Order of operations for `dev`:
 1. Redesign the 13 `.hbs`.
