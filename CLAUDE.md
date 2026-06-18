@@ -88,9 +88,15 @@ Pre-built templates with public thumbnails at `marketplace/thumbnails[-full]/{te
 - Gotcha: API GW custom domains created by the old serverless plugin lived OUTSIDE CFN — if a stray domain/A/AAAA record ever blocks a deploy, delete domain AND records together.
 - Gotcha: a CDK deploy can add API GW resources while the stage keeps serving the OLD deployment snapshot (routes exist but return `{"message":"Missing Authentication Token"}`). Fix: `aws apigateway create-deployment --rest-api-id <id> --stage-name <env>` (happened on prod 2026-06-12 after a partially-failed→rerun deploy).
 
+## PDF Generation Performance (optimized 2026-06-18)
+
+Render speed work, live in dev + prod. Engine stays headless Chromium (a free WeasyPrint swap was evaluated + rejected: no `box-shadow`, partial grid/flex, breaks the arbitrary-HTML/CSS promise). Done: warm browser reuse + concurrent-launch guard; `waitUntil: 'load'` + bounded font wait (replaced slow `networkidle0`); **self-hosted webfonts** (woff2 inlined as `@font-face` data: URIs, no render-time network — `scripts/fetch-fonts.mjs` → `src/libs/theme/generated/fontFaces.ts`, theme path + `{{{mkpdfsFontFaces}}}` helper for marketplace); per-`logoKey` logo cache; PDF lambdas at 4096 MB. Editing fonts → re-run `fetch-fonts.mjs`; editing a marketplace `.hbs` → re-run `seed-marketplace.ts <env>`. Full detail + deferred improvements (output cache, cold-start/provisioned concurrency, persistent Chromium, async email, non-Latin font subsets): `mkpdfs-backend/CLAUDE.md` → "PDF Generation Performance".
+
 ## Known backlog
 
 - Tokens with expiration compare `expiresAt` (ISO) against `Date.now()` (epoch) — expired tokens never expire.
 - No serverless-offline replacement documented (use dev env + `aws logs tail`).
 - `POST /jobs/submit` has the Cognito Gateway authorizer, so its advertised dual-auth (API key) path never worked — tokens get 401 at the Gateway. Found during credits E2E 2026-06-12; either remove the authorizer (in-lambda dual auth like `/v1/pdf/generate`) or add a `/v1/jobs/submit`.
 - Stripe test mode has a duplicate archived-candidate product `prod_Ugv5Pj3JdUg7Az` ("1,000 PDF credits", manually created); the canonical one is `prod_UgjDRUuFAj4lUm` (its price is in SSM dev).
+- `scripts/generate-thumbnails.ts` does not register the `mkpdfsLogo` helper (despite its "MUST stay identical to pdfService.ts" comment) — regenerating thumbnails for logo-using marketplace templates throws `Missing helper: "mkpdfsLogo"`. Add it (mirror `pdfService.ts`) before next thumbnail regen.
+- PDF perf improvements not yet done (deferred until scale): output cache (hash→S3), cold-start work (provisioned concurrency / smaller bundle), persistent Chromium, async email. See `mkpdfs-backend/CLAUDE.md`.
