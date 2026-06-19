@@ -12,7 +12,7 @@ Orchestrator repo with git submodules (each an independent repo with its own CI/
 
 - `mkpdfs-backend/` — AWS CDK app (Lambda, DynamoDB, S3, Cognito, SQS) + TypeScript handlers
 - `mkpdfs-web/` — Next.js frontend (Amplify app `d1cfnbzyl1wf46`; mkpdfs.com / dev.mkpdfs.com)
-- `mkpdfs-cli/` — Go + Cobra CLI (`mkp`; dev binary `mkp-cli` via `make build`/`make dev-link`). Developer workflow: branded device-flow login (`mkp auth login` → mkpdfs.com/cli/authorize), templates pull/push with `.mkpdfs.json` mapping + conflict/env guards, `pdf generate` (JWT or `--api-key`), tokens/usage/config. Per-env credentials in `~/Library/Application Support/mkpdfs/config.json`. Smoke: `scripts/smoke.sh` vs dev. CLI auth backend: `/auth/cli/{device,approve,token}` (device flow, token handover, one-time read).
+- `mkpdfs-cli/` — Go + Cobra CLI (`mkp`; dev binary `mkp-cli` via `make build`/`make dev-link`). Developer workflow: branded device-flow login (`mkp auth login` → mkpdfs.com/cli/authorize), templates pull/push/list/get/delete with `.mkpdfs.json` mapping + conflict/env guards (JWT, or headless `--api-key` → `/v1/templates/*` since v0.3.0), `pdf generate` (JWT or `--api-key`), credits (balance/ledger/auto-recharge/buy), tokens/usage/config. Per-env credentials in `~/Library/Application Support/mkpdfs/config.json`. Smoke: `scripts/smoke.sh` vs dev. CLI auth backend: `/auth/cli/{device,approve,token}` (device flow, token handover, one-time read).
 - `legacy-paper-api/`, `templify-backend/` — legacy, retired
 
 ## Infrastructure (CDK — migrated 2026-06-11, greenfield)
@@ -60,6 +60,7 @@ All changes go through dev first; merge to main only after dev verification. `st
 - **Dual auth** (`src/libs/middleware/dualAuth.ts`): Cognito JWT (validated by the API Gateway authorizer) OR API token `x-api-key: tlfy_*` (SHA256 vs tokens table).
 - **`POST /v1/pdf/generate`** — server-to-server route, **API-key ONLY** (`apiKeyOnlyMiddleware`, no Gateway authorizer; JWT deliberately rejected there because without the authorizer a forged JWT could impersonate).
 - **`PUT /templates/{templateId}`** — update template content in place (multipart or JSON base64, Handlebars validated, ownership-checked; added 2026-06-11).
+- **`/v1/templates/*`** — headless template CRUD, **API-key ONLY** (no Gateway authorizer, `apiKeyOnlyMiddleware`; mirrors `/v1/pdf/generate`), added 2026-06-18 (#2): `GET /v1/templates`, `GET|PUT|DELETE /v1/templates/{templateId}`, `POST /v1/templates/upload`. Consumed by the CLI `mkp templates … --api-key`. Token mint/revoke stays JWT-only.
 - Biggest consumer: Academia Connects service account `platform@academiaconnects.com` (enterprise, manual "Contact Sales" row). Provisioning is idempotent via `provision-mkpdfs.mjs` in the democonnect-api repo; its secrets live in SSM `/democonnect/labs/mkpdfs[-dev]/*` (SecureString — read with `--with-decryption`, never print).
 
 ## Billing (prepaid credits — replaced monthly subscriptions 2026-06-12)
