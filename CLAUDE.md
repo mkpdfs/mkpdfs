@@ -12,7 +12,7 @@ Orchestrator repo with git submodules (each an independent repo with its own CI/
 
 - `mkpdfs-backend/` — AWS CDK app (Lambda, DynamoDB, S3, Cognito, SQS) + TypeScript handlers
 - `mkpdfs-web/` — Next.js frontend (Amplify app `d1cfnbzyl1wf46`; mkpdfs.com / dev.mkpdfs.com)
-- `mkpdfs-cli/` — Go + Cobra CLI (`mkp`; dev binary `mkp-cli` via `make build`/`make dev-link`). Developer workflow: branded device-flow login (`mkp auth login` → mkpdfs.com/cli/authorize), templates pull/push with `.mkpdfs.json` mapping + conflict/env guards, `pdf generate` (JWT or `--api-key`), tokens/usage/config. Per-env credentials in `~/Library/Application Support/mkpdfs/config.json`. Smoke: `scripts/smoke.sh` vs dev. CLI auth backend: `/auth/cli/{device,approve,token}` (device flow, token handover, one-time read).
+- `mkpdfs-cli/` — Go + Cobra CLI (`mkp`; dev binary `mkp-cli` via `make build`/`make dev-link`). Developer workflow: branded device-flow login (`mkp auth login` → mkpdfs.com/cli/authorize), templates pull/push/list/get/delete with `.mkpdfs.json` mapping + conflict/env guards (JWT, or headless `--api-key` → `/v1/templates/*` since v0.3.0), `pdf generate` (JWT or `--api-key`), credits (balance/ledger/auto-recharge/buy), tokens/usage/config, `instructions [--agent]` (offline embedded markdown walkthrough an AI coding agent reads to author+push a template end-to-end; helper signatures sourced from `pdfService.ts`). Per-env credentials in `~/Library/Application Support/mkpdfs/config.json`. Smoke: `scripts/smoke.sh` vs dev. CLI auth backend: `/auth/cli/{device,approve,token}` (device flow, token handover, one-time read).
 - `legacy-paper-api/`, `templify-backend/` — legacy, retired
 
 ## Infrastructure (CDK — migrated 2026-06-11, greenfield)
@@ -26,7 +26,7 @@ Orchestrator repo with git submodules (each an independent repo with its own CI/
 | `Mkpdfs-Auth-{env}` | Cognito pool + client + identity pool + Hosted UI `auth-mkpdfs-{env}` + Google IdP + native lambda triggers |
 | `Mkpdfs-Jobs-{env}` | 4 SQS queues + event source mappings |
 | `Mkpdfs-Api-{env}` | RestApi (~28 lambdas, real OPTIONS preflights), custom domain EDGE + Route53 |
-| `Mkpdfs-Monitoring-{env}` | 15 CW alarms (billing-focused: webhook errors/signatures, recharge declines, debit failures + API/DDB/DLQ), dashboard `mkpdfs-operations-{env}`, SNS `mkpdfs-alerts-{env}`. Gotcha: its log metric filters key off literal handler log strings AND require the lambda log groups to EXIST (pre-create `/aws/lambda/<fn>` for never-invoked fns or the stack rolls back — bit us on first prod deploy) |
+| `Mkpdfs-Monitoring-{env}` | 15 CW alarms (billing-focused: webhook errors/signatures, recharge declines, debit failures + API/DDB/DLQ), dashboard `mkpdfs-operations-{env}`, SNS `mkpdfs-alerts-{env}`, CloudWatch RUM app monitor `mkpdfs-web-{env}` + dedicated guest identity pool `mkpdfs-rum-{env}` (added 2026-07-11; frontend real-user monitoring — see mkpdfs-web notes below). Gotcha: its log metric filters key off literal handler log strings AND require the lambda log groups to EXIST (pre-create `/aws/lambda/<fn>` for never-invoked fns or the stack rolls back — bit us on first prod deploy) |
 
 Key facts:
 - **Live IDs (post-greenfield)**: dev pool `us-east-1_en1MuJD0a` / client `vis091qbpsj164csp32jketbd`; prod pool `us-east-1_IijpRQ3FN` / client `3mgah7n76j694e5sb0092fl6hn`. Old serverless-era pools/IDs are dead.
@@ -60,6 +60,8 @@ All changes go through dev first; merge to main only after dev verification. `st
 - **Dual auth** (`src/libs/middleware/dualAuth.ts`): Cognito JWT (validated by the API Gateway authorizer) OR API token `x-api-key: tlfy_*` (SHA256 vs tokens table).
 - **`POST /v1/pdf/generate`** — server-to-server route, **API-key ONLY** (`apiKeyOnlyMiddleware`, no Gateway authorizer; JWT deliberately rejected there because without the authorizer a forged JWT could impersonate).
 - **`PUT /templates/{templateId}`** — update template content in place (multipart or JSON base64, Handlebars validated, ownership-checked; added 2026-06-11).
+- **`/v1/templates/*`** — headless template CRUD, **API-key ONLY** (no Gateway authorizer, `apiKeyOnlyMiddleware`; mirrors `/v1/pdf/generate`), added 2026-06-18 (#2): `GET /v1/templates`, `GET|PUT|DELETE /v1/templates/{templateId}`, `POST /v1/templates/upload`. Consumed by the CLI `mkp templates … --api-key`. Token mint/revoke stays JWT-only.
+- **`POST /v1/mcp`** — MCP (Model Context Protocol) server, **API-key ONLY** (mirrors `/v1/pdf/generate` and `/v1/templates/*`); built 2026-07-03 but stranded on the `mcp-server` branch (only manually deployed to dev, clobbered by later dev pushes) — **actually shipped dev+prod 2026-07-11**. Exposes `generate_pdf` + template CRUD **+ `get_authoring_guide`** as MCP tools by invoking the same `*ApiKey` handlers in-process (synthetic API Gateway event, no network hop) — guarantees auth/credits/subscription parity with REST. Serves `instructions` on initialize + the authoring-guide tool (template format, helper signatures, worked example — ported from `mkp instructions --agent`; keep in sync with `pdfService.ts`) so connecting agents learn the format without hand-holding. Stateless Streamable HTTP transport (fresh `McpServer` + transport per invocation, no session state). Gotcha: after route changes force `apigateway create-deployment` AND allow a minute of EDGE/CloudFront propagation before concluding the route is missing. Details: `mkpdfs-backend/CLAUDE.md`.
 - Biggest consumer: Academia Connects service account `platform@academiaconnects.com` (enterprise, manual "Contact Sales" row). Provisioning is idempotent via `provision-mkpdfs.mjs` in the democonnect-api repo; its secrets live in SSM `/democonnect/labs/mkpdfs[-dev]/*` (SecureString — read with `--with-decryption`, never print).
 
 ## Billing (prepaid credits — replaced monthly subscriptions 2026-06-12)
@@ -80,6 +82,12 @@ Requires positive credit balance (see Billing). Async SQS + Bedrock (Claude) job
 ## Marketplace
 
 Pre-built templates with public thumbnails at `marketplace/thumbnails[-full]/{templateId}.png` in the env bucket (public-read via bucket policy). Handlers convert `thumbnailKey` → `thumbnailUrl` via `ASSETS_BUCKET_URL`.
+
+## Frontend Observability (CloudWatch RUM — added 2026-07-11)
+
+- App monitor `mkpdfs-web-{env}` lives in the Monitoring stack (dev id `b4e5db41-0e9e-4fc1-9321-e83ba60c9f22`, prod id `4cf8e09e-a922-4bea-b199-1f25adbd6c05`); guest creds via dedicated identity pool `mkpdfs-rum-{env}` (enhanced auth flow — no role ARN needed client-side). domainList dev: `dev.mkpdfs.com` + `localhost`; prod: `mkpdfs.com` + `www.mkpdfs.com` (www is a live Amplify subdomain). 100% session sampling, telemetries errors/performance/http, `cwLogEnabled` (queryable in Logs Insights), plus a `mkpdfs-rum-ingest-spike-{env}` alarm (>10MB/h RumEventPayloadSize) covering abuse of the public guest pool.
+- **aws-rum-web does NOT capture console output.** mkpdfs-web logs through `src/lib/rum-logger.ts` (`rum.info/warn/error('<Area>', …)` — Areas: App/Auth/Login/Register/Password/Callback/API/Upload/Billing/AIGenerate): console + forward to RUM (info/warn as `mkpdfs.log` custom events with `{level, area, message}`; errors also `recordError`). Init: `<RumInit />` in the root layout (`src/lib/rum.ts`); off when `NEXT_PUBLIC_RUM_*` unset. Never pass PII/secrets to rum-logger — events ship to CloudWatch (the OAuth callback logs userId only, not email).
+- Amplify branch env vars `NEXT_PUBLIC_RUM_APP_MONITOR_ID` + `NEXT_PUBLIC_RUM_IDENTITY_POOL_ID` set on BOTH branches (dev + main, 2026-07-11; values come from the Monitoring stack outputs and are inlined at build time — changing them requires an Amplify rebuild). Live-verified both envs (PutRumEvents 200 from dev.mkpdfs.com and mkpdfs.com).
 
 ## Domains & Account
 
