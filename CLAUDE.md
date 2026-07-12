@@ -102,7 +102,6 @@ Render speed work, live in dev + prod. Engine stays headless Chromium (a free We
 
 ## Known backlog
 
-- Tokens with expiration compare `expiresAt` (ISO) against `Date.now()` (epoch) — expired tokens never expire.
 - No serverless-offline replacement documented (use dev env + `aws logs tail`).
 - `POST /jobs/submit` has the Cognito Gateway authorizer, so its advertised dual-auth (API key) path never worked — tokens get 401 at the Gateway. Found during credits E2E 2026-06-12; either remove the authorizer (in-lambda dual auth like `/v1/pdf/generate`) or add a `/v1/jobs/submit`.
 - Stripe test mode has a duplicate archived-candidate product `prod_Ugv5Pj3JdUg7Az` ("1,000 PDF credits", manually created); the canonical one is `prod_UgjDRUuFAj4lUm` (its price is in SSM dev).
