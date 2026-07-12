@@ -26,7 +26,7 @@ Orchestrator repo with git submodules (each an independent repo with its own CI/
 | `Mkpdfs-Auth-{env}` | Cognito pool + client + identity pool + Hosted UI `auth-mkpdfs-{env}` + Google IdP + native lambda triggers |
 | `Mkpdfs-Jobs-{env}` | 4 SQS queues + event source mappings |
 | `Mkpdfs-Api-{env}` | RestApi (~28 lambdas, real OPTIONS preflights), custom domain EDGE + Route53 |
-| `Mkpdfs-Monitoring-{env}` | 15 CW alarms (billing-focused: webhook errors/signatures, recharge declines, debit failures + API/DDB/DLQ), dashboard `mkpdfs-operations-{env}`, SNS `mkpdfs-alerts-{env}`. Gotcha: its log metric filters key off literal handler log strings AND require the lambda log groups to EXIST (pre-create `/aws/lambda/<fn>` for never-invoked fns or the stack rolls back — bit us on first prod deploy) |
+| `Mkpdfs-Monitoring-{env}` | 15 CW alarms (billing-focused: webhook errors/signatures, recharge declines, debit failures + API/DDB/DLQ), dashboard `mkpdfs-operations-{env}`, SNS `mkpdfs-alerts-{env}`, CloudWatch RUM app monitor `mkpdfs-web-{env}` + dedicated guest identity pool `mkpdfs-rum-{env}` (added 2026-07-11; frontend real-user monitoring — see mkpdfs-web notes below). Gotcha: its log metric filters key off literal handler log strings AND require the lambda log groups to EXIST (pre-create `/aws/lambda/<fn>` for never-invoked fns or the stack rolls back — bit us on first prod deploy) |
 
 Key facts:
 - **Live IDs (post-greenfield)**: dev pool `us-east-1_en1MuJD0a` / client `vis091qbpsj164csp32jketbd`; prod pool `us-east-1_IijpRQ3FN` / client `3mgah7n76j694e5sb0092fl6hn`. Old serverless-era pools/IDs are dead.
@@ -82,6 +82,12 @@ Requires positive credit balance (see Billing). Async SQS + Bedrock (Claude) job
 ## Marketplace
 
 Pre-built templates with public thumbnails at `marketplace/thumbnails[-full]/{templateId}.png` in the env bucket (public-read via bucket policy). Handlers convert `thumbnailKey` → `thumbnailUrl` via `ASSETS_BUCKET_URL`.
+
+## Frontend Observability (CloudWatch RUM — added 2026-07-11)
+
+- App monitor `mkpdfs-web-{env}` lives in the Monitoring stack (dev id `b4e5db41-0e9e-4fc1-9321-e83ba60c9f22`); guest creds via dedicated identity pool `mkpdfs-rum-{env}` (enhanced auth flow — no role ARN needed client-side). domainList dev: `dev.mkpdfs.com` + `localhost`; prod: `mkpdfs.com`. 100% session sampling, telemetries errors/performance/http, `cwLogEnabled` (queryable in Logs Insights, log group `RUMService_mkpdfs-web-{env}…`).
+- **aws-rum-web does NOT capture console output.** mkpdfs-web logs through `src/lib/rum-logger.ts` (`rum.info/warn/error('<Area>', …)` — Areas: App/Auth/Login/Register/Password/Callback/API/Upload/Billing/AIGenerate): console + forward to RUM (info/warn as `mkpdfs.log` custom events with `{level, area, message}`; errors also `recordError`). Init: `<RumInit />` in the root layout (`src/lib/rum.ts`); off when `NEXT_PUBLIC_RUM_*` unset. Never pass PII/secrets to rum-logger — events ship to CloudWatch (the OAuth callback logs userId only, not email).
+- Amplify branch env vars `NEXT_PUBLIC_RUM_APP_MONITOR_ID` + `NEXT_PUBLIC_RUM_IDENTITY_POOL_ID` (dev set 2026-07-11). **Prod pending**: merging backend `main` creates `mkpdfs-web-prod` (Monitoring stack outputs) → set both vars on the Amplify `main` branch BEFORE merging mkpdfs-web to main (they're inlined at build time).
 
 ## Domains & Account
 
